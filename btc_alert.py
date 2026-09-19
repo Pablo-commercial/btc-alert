@@ -1,9 +1,10 @@
 import requests
 import os
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-THRESHOLD_PCT = 5.0          # umbral de cambio en 24h para alerta "tocha" (%)
-DAILY_ALERT_HOUR_UTC = 7      # hora (UTC) a partir de la cual se manda el resumen diario
+THRESHOLD_1H_PCT = 3.0          # umbral de cambio en la ultima hora para alerta "tocha" (%)
+DAILY_ALERT_HOUR_MADRID = 9     # hora LOCAL de Espana (ajusta sola con el horario de verano/invierno)
 STATE_FILE = "last_daily_alert.txt"   # guarda la fecha del ultimo resumen enviado
 
 # Se leen de variables de entorno (GitHub Secrets) - nunca hardcodear aqui
@@ -11,17 +12,20 @@ PHONE = os.environ["CALLMEBOT_PHONE"]      # ej: 34612345678 (sin '+')
 APIKEY = os.environ["CALLMEBOT_APIKEY"]    # el numero que te da el bot
 
 
-def get_btc_24h_change_eur():
-    url = "https://api.coingecko.com/api/v3/simple/price"
+def get_btc_data_eur():
+    url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {
+        "vs_currency": "eur",
         "ids": "bitcoin",
-        "vs_currencies": "eur",
-        "include_24hr_change": "true",
+        "price_change_percentage": "1h,24h",
     }
     r = requests.get(url, params=params, timeout=10)
     r.raise_for_status()
-    data = r.json()["bitcoin"]
-    return data["eur"], data["eur_24h_change"]
+    data = r.json()[0]
+    price = data["current_price"]
+    change_1h = data["price_change_percentage_1h_in_currency"]
+    change_24h = data["price_change_percentage_24h_in_currency"]
+    return price, change_1h, change_24h
 
 
 def send_whatsapp(message: str):
@@ -44,40 +48,43 @@ def mark_sent_today(today_str: str):
 
 
 def main():
-    now = datetime.now(timezone.utc)
-    today_str = now.strftime("%Y-%m-%d")
+    now_madrid = datetime.now(ZoneInfo("Europe/Madrid"))
+    today_str = now_madrid.strftime("%Y-%m-%d")
 
-    price, change = get_btc_24h_change_eur()
-    print(f"[{now.isoformat()}] BTC: {price:,.0f}EUR | cambio 24h: {change:.2f}%")
+    price, change_1h, change_24h = get_btc_data_eur()
+    print(
+        f"[{now_madrid.isoformat()}] BTC: {price:,.0f}EUR | "
+        f"cambio 1h: {change_1h:.2f}% | cambio 24h: {change_24h:.2f}%"
+    )
 
-    # --- Puerta 1: evento gordo, dispara siempre que se cumpla, sin limite diario ---
-    if abs(change) >= THRESHOLD_PCT:
-        if change > 0:
+    # --- Puerta 1: movimiento fuerte en la ULTIMA HORA, sin limite diario ---
+    if abs(change_1h) >= THRESHOLD_1H_PCT:
+        if change_1h > 0:
             msg = (
-                f"🚀 Eh tio, BTC se ha pegado un subidon de +{change:.2f}% en 24h!\n"
-                f"Ahora mismo va a {price:,.0f}€. Que ganas de que sigas asi jaja"
+                f"🚀 Eh tio, BTC se ha pegado un subidon de +{change_1h:.2f}% en la ultima hora!\n"
+                f"Ahora mismo va a {price:,.0f}€."
             )
         else:
             msg = (
-                f"📉 Eh, malas noticias: BTC ha caido {change:.2f}% en 24h.\n"
+                f"📉 Eh, BTC ha caido {change_1h:.2f}% en la ultima hora.\n"
                 f"Precio actual: {price:,.0f}€. Aguanta el tipon 💪"
             )
         send_whatsapp(msg)
-        print("Alerta de movimiento fuerte enviada.")
+        print("Alerta de movimiento fuerte (1h) enviada.")
         return  # si ya hubo alerta fuerte, no hace falta ademas el resumen de hoy
 
-    # --- Puerta 2: resumen diario, solo 1 vez por dia natural (UTC) ---
-    if now.hour >= DAILY_ALERT_HOUR_UTC and not already_sent_today(today_str):
+    # --- Puerta 2: resumen diario a las 9:00 hora de Espana, cambio INTERDIARIO (24h) ---
+    if now_madrid.hour == DAILY_ALERT_HOUR_MADRID and not already_sent_today(today_str):
         msg = (
             f"👋 Buenas! Resumen del dia de BTC:\n"
-            f"Precio: {price:,.0f}€ (cambio 24h: {change:+.2f}%)\n"
+            f"Precio: {price:,.0f}€ (cambio 24h: {change_24h:+.2f}%)\n"
             f"Todo tranqui, ningun movimiento raro."
         )
         send_whatsapp(msg)
         mark_sent_today(today_str)
         print("Resumen diario enviado.")
     else:
-        print("Sin alerta esta vez (ni evento fuerte, ni toca resumen diario todavia).")
+        print("Sin alerta esta vez (ni evento fuerte en 1h, ni toca resumen diario todavia).")
 
 
 if __name__ == "__main__":
