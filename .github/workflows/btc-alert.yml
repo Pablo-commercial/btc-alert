@@ -1,0 +1,41 @@
+name: BTC Alert
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-btc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Ejecutar comprobacion
+        env:
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: python btc_alert.py
+
+      - name: Guardar estado (si cambio)
+        run: |
+          if [ -n "$(git status --porcelain last_daily_alert.txt 2>/dev/null)" ]; then
+            git config user.name "btc-alert-bot"
+            git config user.email "actions@github.com"
+            git add last_daily_alert.txt
+            git commit -m "Actualiza fecha del ultimo resumen diario"
+            git push
+          else
+            echo "Sin cambios de estado, nada que commitear."
+          fi
