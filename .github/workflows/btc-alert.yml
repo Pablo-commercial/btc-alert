@@ -2,11 +2,17 @@ name: BTC Alert
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"   # evita :00 y :30, los minutos mas saturados de GitHub
+    - cron: "3 7 * * *"      # refuerzo 9:03 Espana (horario de verano)
+    - cron: "3 8 * * *"      # refuerzo 9:03 Espana (horario de invierno)
   workflow_dispatch: {}
 
 permissions:
   contents: write
+
+concurrency:
+  group: btc-alert
+  cancel-in-progress: false
 
 jobs:
   check-btc:
@@ -35,6 +41,7 @@ jobs:
             git config user.email "actions@github.com"
             git add last_daily_alert.txt
             git commit -m "Actualiza fecha del ultimo resumen diario"
+            git pull --rebase
             git push
           else
             echo "Sin cambios de estado, nada que commitear."
